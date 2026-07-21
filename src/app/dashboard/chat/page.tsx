@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { toast } from "sonner";
@@ -9,40 +9,48 @@ import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { SettingsGate } from "@/components/chat/SettingsGate";
 import { ProviderBadge } from "@/components/chat/ProviderBadge";
+import { ThreadSidebar } from "@/components/chat/ThreadSidebar";
 import {
   loadSettings,
   isSettingsConfigured,
   type ApiSettings,
 } from "@/lib/settings";
+import {
+  AgentProvider,
+  useAgent,
+  generateThreadTitle,
+} from "@/lib/agent";
 
-export default function ChatPage() {
+// ─── Chat Conversation (re-mounts per thread via React key) ──────────────────
+
+interface ChatConversationProps {
+  threadId: string;
+  initialMessages: import("ai").UIMessage[];
+  settings: ApiSettings;
+  onMessagesChange: (threadId: string, messages: import("ai").UIMessage[]) => void;
+  onAutoTitle: (threadId: string, firstMessage: string) => void;
+}
+
+function ChatConversation({
+  threadId,
+  initialMessages,
+  settings,
+  onMessagesChange,
+  onAutoTitle,
+}: ChatConversationProps) {
   const [input, setInput] = useState("");
-  const [settings, setSettings] = useState<ApiSettings | null>(null);
-  const [configured, setConfigured] = useState(false);
+  const titleGeneratedRef = useRef(false);
 
-  // Load settings on mount and when window regains focus (user may return from settings page)
-  const refreshSettings = useCallback(() => {
-    const s = loadSettings();
-    setSettings(s);
-    setConfigured(isSettingsConfigured(s));
-  }, []);
-
-  useEffect(() => {
-    refreshSettings();
-    window.addEventListener("focus", refreshSettings);
-    return () => window.removeEventListener("focus", refreshSettings);
-  }, [refreshSettings]);
-
-  const { messages, sendMessage, status, stop } = useChat({
+  const { messages, sendMessage, status, stop, setMessages } = useChat({
+    id: threadId,
+    messages: initialMessages,
     transport: new DefaultChatTransport({
       api: "/api/chat",
-      body: settings
-        ? {
-            apiKey: settings.apiKey,
-            baseURL: settings.baseURL,
-            model: settings.model,
-          }
-        : undefined,
+      body: {
+        apiKey: settings.apiKey,
+        baseURL: settings.baseURL,
+        model: settings.model,
+      },
     }),
     onError: (error) => {
       toast.error("Something went wrong", {
@@ -51,6 +59,28 @@ export default function ChatPage() {
       });
     },
   });
+
+  // Sync messages back to the agent thread store
+  useEffect(() => {
+    if (messages.length === 0) return;
+    onMessagesChange(threadId, messages);
+
+    // Auto-generate title after first user message
+    if (!titleGeneratedRef.current && messages.length >= 1) {
+      const firstUserMsg = messages.find((m) => m.role === "user");
+      if (firstUserMsg) {
+        const textContent = (firstUserMsg.parts ?? [])
+          .map((part) => (part.type === "text" ? part.text : null))
+          .filter(Boolean)
+          .join("");
+
+        if (textContent) {
+          titleGeneratedRef.current = true;
+          onAutoTitle(threadId, textContent);
+        }
+      }
+    }
+  }, [messages, threadId, onMessagesChange, onAutoTitle]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
@@ -65,46 +95,136 @@ export default function ChatPage() {
 
   return (
     <>
-      <Toaster position="top-right" />
-      <div className="flex h-full flex-col">
-        {/* Header */}
-        <header className="flex items-center justify-between border-b px-6 py-3">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">MicroManus</h1>
-            <p className="text-xs text-muted-foreground">
-              AI Research Assistant
-            </p>
+      {/* Header status */}
+      <div className="flex items-center gap-3">
+        <ProviderBadge settings={settings} />
+        {status !== "ready" && status !== "error" && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground animate-in fade-in duration-300">
+            <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
+            Generating…
           </div>
-          <div className="flex items-center gap-3">
-            {settings && configured && <ProviderBadge settings={settings} />}
-            {status !== "ready" && status !== "error" && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground animate-in fade-in duration-300">
-                <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
-                Generating…
-              </div>
-            )}
-          </div>
-        </header>
-
-        {/* Content */}
-        {!configured ? (
-          <SettingsGate />
-        ) : (
-          <>
-            {/* Messages */}
-            <MessageList messages={messages} status={status} />
-
-            {/* Input */}
-            <MessageInput
-              input={input}
-              handleInputChange={handleInputChange}
-              handleSubmit={handleSubmit}
-              status={status}
-              stop={stop}
-            />
-          </>
         )}
       </div>
+
+      {/* Messages */}
+      <MessageList messages={messages} status={status} />
+
+      {/* Input */}
+      <MessageInput
+        input={input}
+        handleInputChange={handleInputChange}
+        handleSubmit={handleSubmit}
+        status={status}
+        stop={stop}
+      />
     </>
+  );
+}
+
+// ─── Inner Chat (consumes AgentProvider context) ─────────────────────────────
+
+function ChatInner() {
+  const [settings, setSettings] = useState<ApiSettings | null>(null);
+  const [configured, setConfigured] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  const {
+    threads,
+    activeThread,
+    createThread,
+    syncMessages,
+    renameThread,
+  } = useAgent();
+
+  // Load settings on mount and when window regains focus
+  const refreshSettings = useCallback(() => {
+    const s = loadSettings();
+    setSettings(s);
+    setConfigured(isSettingsConfigured(s));
+  }, []);
+
+  useEffect(() => {
+    refreshSettings();
+    window.addEventListener("focus", refreshSettings);
+    return () => window.removeEventListener("focus", refreshSettings);
+  }, [refreshSettings]);
+
+  // Auto-create a thread if none exist and settings are configured
+  useEffect(() => {
+    if (configured && threads.length === 0) {
+      createThread();
+    }
+  }, [configured, threads.length, createThread]);
+
+  // Stable callbacks for ChatConversation
+  const handleMessagesChange = useCallback(
+    (threadId: string, messages: import("ai").UIMessage[]) => {
+      syncMessages(threadId, messages);
+    },
+    [syncMessages],
+  );
+
+  const handleAutoTitle = useCallback(
+    (threadId: string, firstMessage: string) => {
+      renameThread(threadId, generateThreadTitle(firstMessage));
+    },
+    [renameThread],
+  );
+
+  return (
+    <>
+      <Toaster position="top-right" />
+      <div className="flex h-full">
+        {/* Thread Sidebar */}
+        {configured && (
+          <ThreadSidebar
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed((c) => !c)}
+          />
+        )}
+
+        {/* Main Chat Area */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* Header */}
+          <header className="flex items-center justify-between border-b px-6 py-3">
+            <div className="min-w-0">
+              <h1 className="truncate text-lg font-semibold tracking-tight">
+                {activeThread?.title ?? "Pearl"}
+              </h1>
+              <p className="text-xs text-muted-foreground">
+                AI Research Assistant
+              </p>
+            </div>
+
+            {/* Status indicator placeholder — filled by ChatConversation */}
+            <div id="chat-header-status" />
+          </header>
+
+          {/* Content */}
+          {!configured ? (
+            <SettingsGate />
+          ) : activeThread && settings ? (
+            <ChatConversation
+              key={activeThread.id}
+              threadId={activeThread.id}
+              initialMessages={activeThread.messages}
+              settings={settings}
+              onMessagesChange={handleMessagesChange}
+              onAutoTitle={handleAutoTitle}
+            />
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Page (wraps with AgentProvider) ─────────────────────────────────────────
+
+export default function ChatPage() {
+  return (
+    <AgentProvider>
+      <ChatInner />
+    </AgentProvider>
   );
 }
