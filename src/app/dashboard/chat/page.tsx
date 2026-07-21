@@ -29,6 +29,7 @@ interface ChatConversationProps {
   settings: ApiSettings;
   onMessagesChange: (threadId: string, messages: import("ai").UIMessage[]) => void;
   onAutoTitle: (threadId: string, firstMessage: string) => void;
+  onStatusChange: (statusText: string) => void;
 }
 
 function ChatConversation({
@@ -37,11 +38,12 @@ function ChatConversation({
   settings,
   onMessagesChange,
   onAutoTitle,
+  onStatusChange,
 }: ChatConversationProps) {
   const [input, setInput] = useState("");
   const titleGeneratedRef = useRef(false);
 
-  const { messages, sendMessage, status, stop, setMessages } = useChat({
+  const { messages, sendMessage, status, stop } = useChat({
     id: threadId,
     messages: initialMessages,
     transport: new DefaultChatTransport({
@@ -59,6 +61,71 @@ function ChatConversation({
       });
     },
   });
+
+  // Call onStatusChange whenever status/messages changes
+  useEffect(() => {
+    if (status === "ready" || status === "error") {
+      onStatusChange("");
+      return;
+    }
+
+    const assistantMessages = messages.filter((m) => m.role === "assistant");
+    if (assistantMessages.length === 0) {
+      onStatusChange("Thinking...");
+      return;
+    }
+
+    const lastMsg = assistantMessages[assistantMessages.length - 1];
+
+    // Check tool invocations first
+    if (Array.isArray(lastMsg.toolInvocations) && lastMsg.toolInvocations.length > 0) {
+      const lastTool = lastMsg.toolInvocations[lastMsg.toolInvocations.length - 1];
+      const rawName = lastTool.toolName;
+      const toolName = rawName
+        .replace(/([A-Z])/g, " $1")
+        .replace(/-+/g, " ")
+        .trim()
+        .replace(/^./, (str: string) => str.toUpperCase());
+
+      if ("result" in lastTool || lastTool.state === "result") {
+        onStatusChange(`Tool ${toolName} finished...`);
+      } else {
+        onStatusChange(`Calling ${toolName}...`);
+      }
+      return;
+    }
+
+    // Check parts
+    if (Array.isArray(lastMsg.parts) && lastMsg.parts.length > 0) {
+      const lastPart = lastMsg.parts[lastMsg.parts.length - 1];
+      if (lastPart.type.startsWith("tool-") || lastPart.type === "dynamic-tool") {
+        const rawName = lastPart.toolName || lastPart.type.replace("tool-", "");
+        const toolName = rawName
+          .replace(/([A-Z])/g, " $1")
+          .replace(/-+/g, " ")
+          .trim()
+          .replace(/^./, (str: string) => str.toUpperCase());
+
+        if (lastPart.state === "output-available" || lastPart.state === "output-error") {
+          onStatusChange(`Tool ${toolName} finished...`);
+        } else {
+          onStatusChange(`Calling ${toolName}...`);
+        }
+        return;
+      }
+
+      if (lastPart.type === "text" && lastPart.text) {
+        onStatusChange("Generating response...");
+        return;
+      }
+    }
+
+    onStatusChange("Thinking...");
+
+    return () => {
+      onStatusChange("");
+    };
+  }, [status, messages, onStatusChange]);
 
   // Sync messages back to the agent thread store
   useEffect(() => {
@@ -95,17 +162,6 @@ function ChatConversation({
 
   return (
     <>
-      {/* Header status */}
-      <div className="flex items-center gap-3">
-        <ProviderBadge settings={settings} />
-        {status !== "ready" && status !== "error" && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground animate-in fade-in duration-300">
-            <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
-            Generating…
-          </div>
-        )}
-      </div>
-
       {/* Messages */}
       <MessageList messages={messages} status={status} />
 
@@ -127,6 +183,7 @@ function ChatInner() {
   const [settings, setSettings] = useState<ApiSettings | null>(null);
   const [configured, setConfigured] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [statusText, setStatusText] = useState("");
 
   const {
     threads,
@@ -196,8 +253,15 @@ function ChatInner() {
               </p>
             </div>
 
-            {/* Status indicator placeholder — filled by ChatConversation */}
-            <div id="chat-header-status" />
+            <div className="flex items-center gap-3">
+              {settings && configured && <ProviderBadge settings={settings} />}
+              {statusText && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground animate-in fade-in duration-300">
+                  <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
+                  {statusText}
+                </div>
+              )}
+            </div>
           </header>
 
           {/* Content */}
@@ -211,6 +275,7 @@ function ChatInner() {
               settings={settings}
               onMessagesChange={handleMessagesChange}
               onAutoTitle={handleAutoTitle}
+              onStatusChange={setStatusText}
             />
           ) : null}
         </div>

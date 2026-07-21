@@ -1,5 +1,6 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { convertToModelMessages, streamText, UIMessage } from "ai";
+import { type UIMessage } from "ai";
+import { runAgentLoop } from "@/lib/agent";
 
 interface ChatRequestBody {
   messages: UIMessage[];
@@ -31,10 +32,12 @@ export async function POST(req: Request) {
     baseURL: baseURL?.trim() || "https://api.openai.com/v1",
   });
 
-  const result = streamText({
+  const result = await runAgentLoop({
     model: provider(model.trim()),
-    messages: await convertToModelMessages(messages),
+    messages,
+    maxSteps: 5,
   });
 
   return result.toUIMessageStreamResponse();
 }
+
