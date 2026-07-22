@@ -1,33 +1,47 @@
-import { streamText, type LanguageModel, type UIMessage, convertToModelMessages } from "ai";
-import { toolRegistry } from "./tool-registry";
-import { z } from "zod";
+import { streamText, type LanguageModel, type UIMessage, convertToModelMessages, type StreamTextResult, type tool } from "ai";
+import { toolRegistry, toSdkTools } from "./tool-registry";
 
-interface RunAgentOptions {
+export type AgentRuntimeStatus = "thinking" | "tool_call" | "generating" | "completed";
+
+export interface RunAgentOptions {
   model: LanguageModel;
   messages: UIMessage[];
   maxSteps?: number;
+  signal?: AbortSignal;
+  onStatus?: (status: AgentRuntimeStatus) => void;
 }
 
-export async function runAgentLoop({ model, messages, maxSteps = 5 }: RunAgentOptions) {
-  const registeredTools = toolRegistry.listTools();
-  const sdkTools: Record<string, any> = {};
+export async function runAgentLoop({
+  model,
+  messages,
+  maxSteps = 5,
+  signal,
+  onStatus,
+}: RunAgentOptions): Promise<any> {
+  // Prime runtime event state
+  onStatus?.("thinking");
 
-  for (const tool of registeredTools) {
-    sdkTools[tool.name] = {
-      description: tool.description,
-      parameters: tool.parameters ?? z.object({}),
-      execute: async (args: any) => {
-        return tool.execute(args);
-      },
-    };
-  }
-
+  const agentTools = toSdkTools(toolRegistry.listTools());
   const modelMessages = await convertToModelMessages(messages);
 
   return streamText({
     model,
     messages: modelMessages,
-    tools: sdkTools,
+    tools: agentTools,
     maxSteps,
-  });
+    abortSignal: signal,
+    onStepFinish: ({ toolCalls }: any) => {
+      if (toolCalls && toolCalls.length > 0) {
+        onStatus?.("tool_call");
+      }
+    },
+    onChunk: ({ chunk }: any) => {
+      if (chunk.type === "text-delta" && (chunk.textDelta || chunk.text)) {
+        onStatus?.("generating");
+      }
+    },
+    onFinish: () => {
+      onStatus?.("completed");
+    },
+  } as any);
 }

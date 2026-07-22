@@ -78,8 +78,8 @@ function ChatConversation({
     const lastMsg = assistantMessages[assistantMessages.length - 1];
 
     // Check tool invocations first
-    if (Array.isArray(lastMsg.toolInvocations) && lastMsg.toolInvocations.length > 0) {
-      const lastTool = lastMsg.toolInvocations[lastMsg.toolInvocations.length - 1];
+    if (Array.isArray((lastMsg as any).toolInvocations) && (lastMsg as any).toolInvocations.length > 0) {
+      const lastTool = (lastMsg as any).toolInvocations[(lastMsg as any).toolInvocations.length - 1];
       const rawName = lastTool.toolName;
       const toolName = rawName
         .replace(/([A-Z])/g, " $1")
@@ -99,14 +99,14 @@ function ChatConversation({
     if (Array.isArray(lastMsg.parts) && lastMsg.parts.length > 0) {
       const lastPart = lastMsg.parts[lastMsg.parts.length - 1];
       if (lastPart.type.startsWith("tool-") || lastPart.type === "dynamic-tool") {
-        const rawName = lastPart.toolName || lastPart.type.replace("tool-", "");
+        const rawName = (lastPart as any).toolName || lastPart.type.replace("tool-", "");
         const toolName = rawName
           .replace(/([A-Z])/g, " $1")
           .replace(/-+/g, " ")
           .trim()
           .replace(/^./, (str: string) => str.toUpperCase());
 
-        if (lastPart.state === "output-available" || lastPart.state === "output-error") {
+        if ((lastPart as any).state === "output-available" || (lastPart as any).state === "output-error") {
           onStatusChange(`Tool ${toolName} finished...`);
         } else {
           onStatusChange(`Calling ${toolName}...`);
