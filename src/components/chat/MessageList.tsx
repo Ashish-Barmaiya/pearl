@@ -6,17 +6,42 @@ import { Sparkles } from "lucide-react";
 import { Message } from "./Message";
 import { TypingIndicator } from "./TypingIndicator";
 
+import { ErrorMessage } from "./ErrorMessage";
+
 interface MessageListProps {
   messages: UIMessage[];
   status: "submitted" | "streaming" | "ready" | "error";
+  error?: Error;
+  reload?: () => void;
 }
 
-export function MessageList({ messages, status }: MessageListProps) {
+export function MessageList({
+  messages,
+  status,
+  error,
+  reload,
+}: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const prevLenRef = useRef<number>(messages.length);
+  const prevStatusRef = useRef<typeof status>(status);
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, status]);
+    const prevLen = prevLenRef.current;
+    const prevStatus = prevStatusRef.current;
+
+    const lenChanged = messages.length !== prevLen;
+    const statusChanged = status !== prevStatus;
+
+    if (lenChanged || statusChanged) {
+      // Scroll only on new message or status transitions (submitted/streaming/ready/error)
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+
+    prevLenRef.current = messages.length;
+    prevStatusRef.current = status;
+    // Only depend on messages.length and status to avoid frequent runs during streaming token updates
+  }, [messages.length, status]);
 
   if (messages.length === 0) {
     return (
@@ -40,7 +65,10 @@ export function MessageList({ messages, status }: MessageListProps) {
         {messages.map((message) => (
           <Message key={message.id} message={message} />
         ))}
-        {status === "submitted" && <TypingIndicator />}
+        {(status === "submitted" || status === "streaming") && (
+          <TypingIndicator />
+        )}
+        {error && <ErrorMessage error={error} onRetry={reload} />}
         <div ref={bottomRef} />
       </div>
     </div>

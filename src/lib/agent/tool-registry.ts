@@ -1,55 +1,53 @@
-import { Tool } from "./tool";
+import { tool, type Tool as AISDKTool } from "ai";
 import { z } from "zod";
-import { tool, type Tool as SdkTool } from "ai";
+
+import type { Tool } from "./tool";
+import { tavilySearchTool } from "./tools/tavily-search";
 
 class ToolRegistry {
-  private tools = new Map<string, Tool<any, any>>();
+  private readonly tools = new Map<string, Tool>();
 
-  registerTool(tool: Tool<any, any>): void {
-    this.tools.set(tool.name, tool);
+  registerTool(toolDefinition: Tool): void {
+    if (this.tools.has(toolDefinition.name)) {
+      throw new Error(`Tool "${toolDefinition.name}" is already registered.`);
+    }
+
+    this.tools.set(toolDefinition.name, toolDefinition);
   }
 
-  getTool(name: string): Tool<any, any> | undefined {
+  getTool(name: string): Tool | undefined {
     return this.tools.get(name);
   }
 
-  listTools(): Tool<any, any>[] {
-    return Array.from(this.tools.values());
+  listTools(): Tool[] {
+    return [...this.tools.values()];
   }
 }
 
 export const toolRegistry = new ToolRegistry();
 
-// ─── Tool Conversion helper ───────────────────────────────────────────────
+export function toSdkTools(registeredTools: Tool[]): Record<string, AISDKTool> {
+  const sdkTools: Record<string, AISDKTool> = {};
 
-export function toSdkTools(
-  registeredTools: Tool<any, any>[]
-): Record<string, any> {
-  const convertedTools: Record<string, any> = {};
+  for (const toolDefinition of registeredTools) {
+    sdkTools[toolDefinition.name] = tool({
+      description: toolDefinition.description,
 
-  for (const t of registeredTools) {
-    convertedTools[t.name] = tool({
-      description: t.description,
-      parameters: t.parameters ?? z.any(),
-      execute: async (args: any): Promise<any> => {
-        try {
-          return await t.execute(args);
-        } catch (error) {
-          // Safe execution: never crash the stream, return a structured error
-          return {
-            error: true,
-            message: error instanceof Error ? error.message : String(error),
-          };
-        }
+      inputSchema: toolDefinition.parameters ?? z.object({}),
+
+      execute: async (input) => {
+        console.log(`[Tool] ${toolDefinition.name}`, input);
+
+        const result = await toolDefinition.execute(input);
+
+        console.log(`[Tool] ${toolDefinition.name} completed`);
+
+        return result;
       },
-    } as any);
+    });
   }
 
-  return convertedTools;
+  return sdkTools;
 }
-
-// ─── Registered Tools ─────────────────────────────────────────────────────────
-
-import { tavilySearchTool } from "./tools/tavily-search";
 
 toolRegistry.registerTool(tavilySearchTool);

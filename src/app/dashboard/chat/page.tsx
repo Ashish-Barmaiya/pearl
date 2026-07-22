@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { toast } from "sonner";
+// toast removed — unused
 import { Toaster } from "@/components/ui/sonner";
 import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
@@ -15,11 +15,8 @@ import {
   isSettingsConfigured,
   type ApiSettings,
 } from "@/lib/settings";
-import {
-  AgentProvider,
-  useAgent,
-  generateThreadTitle,
-} from "@/lib/agent";
+import { AgentProvider, useAgent, generateThreadTitle } from "@/lib/agent";
+// debug logger removed — avoid noisy logs during streaming
 
 // ─── Chat Conversation (re-mounts per thread via React key) ──────────────────
 
@@ -27,7 +24,10 @@ interface ChatConversationProps {
   threadId: string;
   initialMessages: import("ai").UIMessage[];
   settings: ApiSettings;
-  onMessagesChange: (threadId: string, messages: import("ai").UIMessage[]) => void;
+  onMessagesChange: (
+    threadId: string,
+    messages: import("ai").UIMessage[],
+  ) => void;
   onAutoTitle: (threadId: string, firstMessage: string) => void;
   onStatusChange: (statusText: string) => void;
 }
@@ -42,8 +42,7 @@ function ChatConversation({
 }: ChatConversationProps) {
   const [input, setInput] = useState("");
   const titleGeneratedRef = useRef(false);
-
-  const { messages, sendMessage, status, stop } = useChat({
+  const { messages, sendMessage, status, stop, error } = useChat({
     id: threadId,
     messages: initialMessages,
     transport: new DefaultChatTransport({
@@ -54,12 +53,6 @@ function ChatConversation({
         model: settings.model,
       },
     }),
-    onError: (error) => {
-      toast.error("Something went wrong", {
-        description:
-          error.message || "Failed to get a response. Please try again.",
-      });
-    },
   });
 
   // Call onStatusChange whenever status/messages changes
@@ -78,8 +71,13 @@ function ChatConversation({
     const lastMsg = assistantMessages[assistantMessages.length - 1];
 
     // Check tool invocations first
-    if (Array.isArray((lastMsg as any).toolInvocations) && (lastMsg as any).toolInvocations.length > 0) {
-      const lastTool = (lastMsg as any).toolInvocations[(lastMsg as any).toolInvocations.length - 1];
+    if (
+      Array.isArray((lastMsg as any).toolInvocations) &&
+      (lastMsg as any).toolInvocations.length > 0
+    ) {
+      const lastTool = (lastMsg as any).toolInvocations[
+        (lastMsg as any).toolInvocations.length - 1
+      ];
       const rawName = lastTool.toolName;
       if (rawName === "tavilySearch") {
         if ("result" in lastTool || lastTool.state === "result") {
@@ -107,10 +105,17 @@ function ChatConversation({
     // Check parts
     if (Array.isArray(lastMsg.parts) && lastMsg.parts.length > 0) {
       const lastPart = lastMsg.parts[lastMsg.parts.length - 1];
-      if (lastPart.type.startsWith("tool-") || lastPart.type === "dynamic-tool") {
-        const rawName = (lastPart as any).toolName || lastPart.type.replace("tool-", "");
+      if (
+        lastPart.type.startsWith("tool-") ||
+        lastPart.type === "dynamic-tool"
+      ) {
+        const rawName =
+          (lastPart as any).toolName || lastPart.type.replace("tool-", "");
         if (rawName === "tavilySearch") {
-          if ((lastPart as any).state === "output-available" || (lastPart as any).state === "output-error") {
+          if (
+            (lastPart as any).state === "output-available" ||
+            (lastPart as any).state === "output-error"
+          ) {
             onStatusChange("Analyzing search results...");
           } else {
             onStatusChange("Searching the web...");
@@ -124,7 +129,10 @@ function ChatConversation({
           .trim()
           .replace(/^./, (str: string) => str.toUpperCase());
 
-        if ((lastPart as any).state === "output-available" || (lastPart as any).state === "output-error") {
+        if (
+          (lastPart as any).state === "output-available" ||
+          (lastPart as any).state === "output-error"
+        ) {
           onStatusChange(`Tool ${toolName} finished...`);
         } else {
           onStatusChange(`Calling ${toolName}...`);
@@ -147,25 +155,28 @@ function ChatConversation({
 
   // Sync messages back to the agent thread store
   useEffect(() => {
+    // Persist to thread store only after generation completes (ready/error)
+    if (status !== "ready" && status !== "error") return;
     if (messages.length === 0) return;
+
     onMessagesChange(threadId, messages);
 
-    // Auto-generate title after first user message
-    if (!titleGeneratedRef.current && messages.length >= 1) {
-      const firstUserMsg = messages.find((m) => m.role === "user");
-      if (firstUserMsg) {
-        const textContent = (firstUserMsg.parts ?? [])
-          .map((part) => (part.type === "text" ? part.text : null))
-          .filter(Boolean)
+    if (!titleGeneratedRef.current) {
+      const firstUser = messages.find((m) => m.role === "user");
+      if (firstUser) {
+        const text = (firstUser.parts ?? [])
+          .filter((p) => p.type === "text")
+          .map((p: any) => p.text)
           .join("");
 
-        if (textContent) {
+        if (text) {
           titleGeneratedRef.current = true;
-          onAutoTitle(threadId, textContent);
+          onAutoTitle(threadId, text);
         }
       }
     }
-  }, [messages, threadId, onMessagesChange, onAutoTitle]);
+    // Intentionally only depend on final-status and messages from useChat
+  }, [status, messages, threadId, onMessagesChange, onAutoTitle]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
@@ -181,7 +192,7 @@ function ChatConversation({
   return (
     <>
       {/* Messages */}
-      <MessageList messages={messages} status={status} />
+      <MessageList messages={messages} status={status} error={error} />
 
       {/* Input */}
       <MessageInput
@@ -198,18 +209,17 @@ function ChatConversation({
 // ─── Inner Chat (consumes AgentProvider context) ─────────────────────────────
 
 function ChatInner() {
-  const [settings, setSettings] = useState<ApiSettings | null>(null);
-  const [configured, setConfigured] = useState(false);
+  const initialSettings = loadSettings();
+  const [settings, setSettings] = useState<ApiSettings | null>(initialSettings);
+  const [configured, setConfigured] = useState(
+    isSettingsConfigured(initialSettings),
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [statusText, setStatusText] = useState("");
 
-  const {
-    threads,
-    activeThread,
-    createThread,
-    syncMessages,
-    renameThread,
-  } = useAgent();
+  const { threads, activeThread, createThread, syncMessages, renameThread } =
+    useAgent();
+  // No synchronization bookkeeping refs — keep agent store as the single source of truth
 
   // Load settings on mount and when window regains focus
   const refreshSettings = useCallback(() => {
@@ -219,7 +229,8 @@ function ChatInner() {
   }, []);
 
   useEffect(() => {
-    refreshSettings();
+    // Do not call refreshSettings synchronously here to avoid setState during effect;
+    // initial settings are applied via the lazy initialization above.
     window.addEventListener("focus", refreshSettings);
     return () => window.removeEventListener("focus", refreshSettings);
   }, [refreshSettings]);

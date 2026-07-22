@@ -11,8 +11,14 @@ import type { ReactNode } from "react";
 import type { UIMessage } from "ai";
 import React from "react";
 
-import type { AgentState, AgentAction, AgentContextValue, Thread } from "./types";
+import type {
+  AgentState,
+  AgentAction,
+  AgentContextValue,
+  Thread,
+} from "./types";
 import { createThread as createNewThread } from "./thread";
+import { logChatState } from "@/lib/debug/chat-state-log";
 
 // ─── Reducer ─────────────────────────────────────────────────────────────────
 
@@ -60,15 +66,33 @@ function agentReducer(state: AgentState, action: AgentAction): AgentState {
         ),
       };
 
-    case "SYNC_MESSAGES":
+    case "SYNC_MESSAGES": {
+      const index = state.threads.findIndex((t) => t.id === action.threadId);
+
+      if (index === -1) {
+        return state;
+      }
+
+      const existing = state.threads[index];
+
+      if (existing.messages === action.messages) {
+        return state;
+      }
+
+      const updatedThread = {
+        ...existing,
+        messages: action.messages,
+        updatedAt: new Date(),
+      };
+
+      const threads = [...state.threads];
+      threads[index] = updatedThread;
+
       return {
         ...state,
-        threads: state.threads.map((t) =>
-          t.id === action.threadId
-            ? { ...t, messages: action.messages, updatedAt: new Date() }
-            : t,
-        ),
+        threads,
       };
+    }
 
     default:
       return state;

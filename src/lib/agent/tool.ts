@@ -1,8 +1,11 @@
 import { z } from "zod";
 
-export interface Tool<TParams = unknown, TOutput = unknown> {
+export interface Tool<TInput = unknown, TOutput = unknown> {
   name: string;
+
   description: string;
-  parameters?: z.ZodTypeAny;
-  execute(input: TParams): Promise<TOutput>;
+
+  parameters: z.ZodType<TInput>;
+
+  execute(input: TInput): Promise<TOutput>;
 }

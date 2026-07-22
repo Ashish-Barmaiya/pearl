@@ -1,7 +1,14 @@
-import { streamText, type LanguageModel, type UIMessage, convertToModelMessages, type StreamTextResult, type tool } from "ai";
+import {
+  streamText,
+  type LanguageModel,
+  type UIMessage,
+  convertToModelMessages,
+} from "ai";
+
 import { toolRegistry, toSdkTools } from "./tool-registry";
 
-export type AgentRuntimeStatus = "thinking" | "tool_call" | "generating" | "completed";
+export type AgentRuntimeStatus =
+  "thinking" | "tool_call" | "generating" | "completed";
 
 export interface RunAgentOptions {
   model: LanguageModel;
@@ -17,36 +24,66 @@ export async function runAgentLoop({
   maxSteps = 5,
   signal,
   onStatus,
-}: RunAgentOptions): Promise<any> {
-  // Prime runtime event state
+}: RunAgentOptions) {
   onStatus?.("thinking");
 
-  const agentTools = toSdkTools(toolRegistry.listTools());
+  const sdkTools = toSdkTools(toolRegistry.listTools());
+
   const modelMessages = await convertToModelMessages(messages);
 
-  const SYSTEM_PROMPT = `You are a helpful AI assistant.
-When you need current information, facts, or news, or if you are uncertain, use the tavilySearch tool.
-Do NOT use the search tool for math, programming explanations, general knowledge, or simple reasoning tasks.`;
+  const SYSTEM_PROMPT = `
+You are Pearl, an AI research assistant.
+
+You have access to external tools.
+
+Rules:
+
+- Use tavilySearch whenever the answer depends on:
+  - current events
+  - recent news
+  - live information
+  - sports results
+  - today's date or time
+  - stock prices
+  - weather
+  - anything after your knowledge cutoff
+
+- Never invent current information.
+
+- If a search is unnecessary (math, programming, writing, explanations, reasoning), answer directly without using tools.
+
+- After receiving tool results, synthesize them into a natural answer. Do not simply dump raw search results.
+`;
 
   return streamText({
     model,
     system: SYSTEM_PROMPT,
+
     messages: modelMessages,
-    tools: agentTools,
-    maxSteps,
+
+    tools: sdkTools,
+
+    stopWhen: ({ steps }) => steps.length >= maxSteps,
+
+    maxOutputTokens: 1024,
+
     abortSignal: signal,
-    onStepFinish: ({ toolCalls }: any) => {
-      if (toolCalls && toolCalls.length > 0) {
+
+    onStepFinish({ toolCalls }) {
+      if (toolCalls.length > 0) {
+        console.log("[Agent] Tool Calls:", toolCalls);
         onStatus?.("tool_call");
       }
     },
-    onChunk: ({ chunk }: any) => {
-      if (chunk.type === "text-delta" && (chunk.textDelta || chunk.text)) {
+
+    onChunk({ chunk }) {
+      if (chunk.type === "text-delta") {
         onStatus?.("generating");
       }
     },
-    onFinish: () => {
+
+    onFinish() {
       onStatus?.("completed");
     },
-  } as any);
+  });
 }

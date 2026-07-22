@@ -3,6 +3,7 @@ export { createThread, generateThreadTitle } from "./thread";
 export { runAgentLoop, type AgentRuntimeStatus, type RunAgentOptions } from "./runtime";
 export { toolRegistry, toSdkTools } from "./tool-registry";
 export { executeTool } from "./executor";
+export * from "./errors";
 export type { Tool } from "./tool";
 export type {
   Thread,
