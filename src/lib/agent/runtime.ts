@@ -24,8 +24,13 @@ export async function runAgentLoop({
   const agentTools = toSdkTools(toolRegistry.listTools());
   const modelMessages = await convertToModelMessages(messages);
 
+  const SYSTEM_PROMPT = `You are a helpful AI assistant.
+When you need current information, facts, or news, or if you are uncertain, use the tavilySearch tool.
+Do NOT use the search tool for math, programming explanations, general knowledge, or simple reasoning tasks.`;
+
   return streamText({
     model,
+    system: SYSTEM_PROMPT,
     messages: modelMessages,
     tools: agentTools,
     maxSteps,

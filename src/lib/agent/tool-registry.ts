@@ -48,15 +48,8 @@ export function toSdkTools(
   return convertedTools;
 }
 
-// ─── Initial Mock Tool: Current Time ─────────────────────────────────────────
+// ─── Registered Tools ─────────────────────────────────────────────────────────
 
-const currentTimeTool: Tool<Record<string, never>, string> = {
-  name: "currentTime",
-  description: "Returns the current date and time in ISO format. Use this whenever the user asks for the current date or time.",
-  parameters: z.object({}),
-  async execute(): Promise<string> {
-    return new Date().toISOString();
-  },
-};
+import { tavilySearchTool } from "./tools/tavily-search";
 
-toolRegistry.registerTool(currentTimeTool);
+toolRegistry.registerTool(tavilySearchTool);

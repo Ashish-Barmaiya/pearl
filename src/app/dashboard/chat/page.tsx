@@ -81,6 +81,15 @@ function ChatConversation({
     if (Array.isArray((lastMsg as any).toolInvocations) && (lastMsg as any).toolInvocations.length > 0) {
       const lastTool = (lastMsg as any).toolInvocations[(lastMsg as any).toolInvocations.length - 1];
       const rawName = lastTool.toolName;
+      if (rawName === "tavilySearch") {
+        if ("result" in lastTool || lastTool.state === "result") {
+          onStatusChange("Analyzing search results...");
+        } else {
+          onStatusChange("Searching the web...");
+        }
+        return;
+      }
+
       const toolName = rawName
         .replace(/([A-Z])/g, " $1")
         .replace(/-+/g, " ")
@@ -100,6 +109,15 @@ function ChatConversation({
       const lastPart = lastMsg.parts[lastMsg.parts.length - 1];
       if (lastPart.type.startsWith("tool-") || lastPart.type === "dynamic-tool") {
         const rawName = (lastPart as any).toolName || lastPart.type.replace("tool-", "");
+        if (rawName === "tavilySearch") {
+          if ((lastPart as any).state === "output-available" || (lastPart as any).state === "output-error") {
+            onStatusChange("Analyzing search results...");
+          } else {
+            onStatusChange("Searching the web...");
+          }
+          return;
+        }
+
         const toolName = rawName
           .replace(/([A-Z])/g, " $1")
           .replace(/-+/g, " ")
